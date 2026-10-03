@@ -19,7 +19,8 @@ public class TouchEventService {
     }
 
     public TouchEvent record(String decoyId, TouchKind kind, String sourceIp, String userAgent,
-                             String requestPath, boolean exempted, String matchedExemptionId) {
+                             String requestPath, boolean exempted, String matchedExemptionId,
+                             boolean passwordCorrect) {
         TouchEvent event = new TouchEvent();
         event.setEventId(UUID.randomUUID().toString());
         event.setDecoyId(decoyId);
@@ -30,10 +31,17 @@ public class TouchEventService {
         event.setTimestamp(System.currentTimeMillis());
         event.setExempted(exempted);
         event.setMatchedExemptionId(matchedExemptionId);
+        event.setPasswordCorrect(passwordCorrect);
         event.setProcessed(false);
         store.mutate(state -> state.getTouchEvents().add(event));
         processor.submit(event.getEventId());
         return event;
+    }
+
+    public TouchEvent record(String decoyId, TouchKind kind, String sourceIp, String userAgent,
+                             String requestPath, boolean exempted, String matchedExemptionId) {
+        return record(decoyId, kind, sourceIp, userAgent, requestPath, exempted,
+                matchedExemptionId, false);
     }
 
     public List<TouchEvent> findUnprocessed() {

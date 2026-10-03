@@ -13,6 +13,7 @@ public class TouchEvent {
     private boolean exempted;
     private String matchedExemptionId;
     private boolean processed;
+    private boolean passwordCorrect;
 
     public String getEventId() {
         return eventId;
@@ -92,5 +93,13 @@ public class TouchEvent {
 
     public void setProcessed(boolean processed) {
         this.processed = processed;
+    }
+
+    public boolean isPasswordCorrect() {
+        return passwordCorrect;
+    }
+
+    public void setPasswordCorrect(boolean passwordCorrect) {
+        this.passwordCorrect = passwordCorrect;
     }
 }

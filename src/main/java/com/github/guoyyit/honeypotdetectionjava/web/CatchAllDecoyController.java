@@ -25,15 +25,18 @@ public class CatchAllDecoyController {
     private final TouchEventService touchEventService;
     private final ExemptionService exemptionService;
     private final HoneypotProperties properties;
+    private final MarkerInjector markerInjector;
 
     public CatchAllDecoyController(DecoyService decoyService,
                                    TouchEventService touchEventService,
                                    ExemptionService exemptionService,
-                                   HoneypotProperties properties) {
+                                   HoneypotProperties properties,
+                                   MarkerInjector markerInjector) {
         this.decoyService = decoyService;
         this.touchEventService = touchEventService;
         this.exemptionService = exemptionService;
         this.properties = properties;
+        this.markerInjector = markerInjector;
     }
 
     @RequestMapping("/**")
@@ -55,21 +58,12 @@ public class CatchAllDecoyController {
                 match.isMatched(), match.getRuleId());
         SimulatedResponse simulation = decoy.getSimulatedResponse();
         String traceMarker = properties.getInternalMarker() + ":" + decoy.getId();
+        MarkerInjector.Injection injection = markerInjector.inject(simulation.getBody(),
+                traceMarker, simulation.getContentType());
         return ResponseEntity.status(simulation.getStatusCode())
                 .header(TRACE_HEADER, traceMarker)
-                .contentType(MediaType.parseMediaType(
-                        simulation.getContentType() != null ? simulation.getContentType()
-                                : MediaType.APPLICATION_JSON_VALUE))
-                .body(injectMarker(simulation.getBody(), traceMarker,
-                        simulation.getContentType()));
-    }
-
-    private String injectMarker(String body, String marker, String contentType) {
-        String safeBody = body != null ? body : "";
-        if (contentType != null && contentType.contains("html")) {
-            return safeBody + "<!-- " + marker + " -->";
-        }
-        return safeBody + "\n// " + marker;
+                .contentType(MediaType.parseMediaType(injection.contentType()))
+                .body(injection.body());
     }
 
     private String resolveSourceIp(HttpServletRequest request) {

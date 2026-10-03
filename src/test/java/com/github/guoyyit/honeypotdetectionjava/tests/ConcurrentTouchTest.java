@@ -3,7 +3,10 @@ package com.github.guoyyit.honeypotdetectionjava.tests;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -21,6 +24,7 @@ class ConcurrentTouchTest extends AbstractIntegrationTest {
     private static final String DECOY_ID = "concurrent-endpoint-1";
     private static final int THREADS = 32;
     private static final int CALLS_PER_THREAD = 10;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeAll
     void setUp() {
@@ -39,14 +43,19 @@ class ConcurrentTouchTest extends AbstractIntegrationTest {
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(THREADS);
         AtomicInteger okStatus = new AtomicInteger();
+        AtomicInteger validBodies = new AtomicInteger();
         for (int t = 0; t < THREADS; t++) {
             pool.submit(() -> {
                 try {
                     start.await();
                     for (int i = 0; i < CALLS_PER_THREAD; i++) {
-                        if (rest.getForEntity(url("/concurrent-target"), String.class)
-                                .getStatusCode().is2xxSuccessful()) {
+                        ResponseEntity<String> response = rest.getForEntity(
+                                url("/concurrent-target"), String.class);
+                        if (response.getStatusCode().is2xxSuccessful()) {
                             okStatus.incrementAndGet();
+                            if (isCompleteAndMarked(response.getBody())) {
+                                validBodies.incrementAndGet();
+                            }
                         }
                     }
                 } catch (Exception e) {
@@ -62,6 +71,8 @@ class ConcurrentTouchTest extends AbstractIntegrationTest {
 
         int expected = THREADS * CALLS_PER_THREAD;
         assertEquals(expected, okStatus.get());
+        assertEquals(expected, validBodies.get(),
+                "every concurrent response must be complete, legal and carry the marker");
 
         long deadline = System.currentTimeMillis() + 15000;
         while (System.currentTimeMillis() < deadline) {
@@ -78,5 +89,16 @@ class ConcurrentTouchTest extends AbstractIntegrationTest {
         String body = adminExchange("/admin/events?decoyId=" + decoyId,
                 HttpMethod.GET, null, String.class).getBody();
         return body.split("eventId").length - 1L;
+    }
+
+    private boolean isCompleteAndMarked(String body) {
+        try {
+            JsonNode parsed = objectMapper.readTree(body);
+            return "ok".equals(parsed.get("status").asText())
+                    && body.contains(DECOY_ID)
+                    && parsed.has("_honeypot_trace");
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

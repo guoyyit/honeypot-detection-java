@@ -2,6 +2,7 @@ package com.github.guoyyit.honeypotdetectionjava.decoy;
 
 import com.github.guoyyit.honeypotdetectionjava.audit.AuditService;
 import com.github.guoyyit.honeypotdetectionjava.persist.JsonStateStore;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -9,6 +10,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.UUID;
 
 @Service
@@ -22,10 +25,23 @@ public class DecoyService {
 
     private final JsonStateStore store;
     private final AuditService auditService;
+    private final Map<String, DecoyResource> enabledCredentialsByUsername = new ConcurrentHashMap<>();
 
     public DecoyService(JsonStateStore store, AuditService auditService) {
         this.store = store;
         this.auditService = auditService;
+    }
+
+    @PostConstruct
+    public void initCredentialIndex() {
+        store.read(state -> {
+            state.getDecoys().stream()
+                    .filter(d -> d.getType() == DecoyType.CREDENTIAL
+                            && d.getStatus() == DecoyStatus.ENABLED
+                            && d.getDecoyUsername() != null)
+                    .forEach(d -> enabledCredentialsByUsername.put(d.getDecoyUsername(), d));
+            return null;
+        });
     }
 
     public DecoyResource create(DecoyResource input, String actor) {
@@ -76,6 +92,11 @@ public class DecoyService {
             state.getDecoys().add(input);
             holder[0] = input;
         });
+        if (input.getType() == DecoyType.CREDENTIAL
+                && input.getStatus() == DecoyStatus.ENABLED
+                && input.getDecoyUsername() != null) {
+            enabledCredentialsByUsername.put(input.getDecoyUsername(), input);
+        }
         auditService.record(actor, "CREATE_DECOY", "DecoyResource", holder[0].getId(),
                 "type=" + holder[0].getType() + ", name=" + holder[0].getName(), true);
         return holder[0];
@@ -83,23 +104,42 @@ public class DecoyService {
 
     public DecoyResource enable(String id, String actor) {
         DecoyResource updated = changeStatus(id, DecoyStatus.ENABLED);
+        if (updated.getType() == DecoyType.CREDENTIAL && updated.getDecoyUsername() != null) {
+            enabledCredentialsByUsername.put(updated.getDecoyUsername(), updated);
+        }
         auditService.record(actor, "ENABLE_DECOY", "DecoyResource", id, null, true);
         return updated;
     }
 
     public DecoyResource disable(String id, String actor) {
         DecoyResource updated = changeStatus(id, DecoyStatus.DISABLED);
+        if (updated.getType() == DecoyType.CREDENTIAL && updated.getDecoyUsername() != null) {
+            enabledCredentialsByUsername.remove(updated.getDecoyUsername());
+        }
         auditService.record(actor, "DISABLE_DECOY", "DecoyResource", id, null, true);
         return updated;
     }
 
     public void delete(String id, String actor) {
         boolean[] removed = {false};
-        store.mutate(state ->
-                removed[0] = state.getDecoys().removeIf(d -> id.equals(d.getId())));
+        DecoyResource[] removedHolder = new DecoyResource[1];
+        store.mutate(state -> {
+            DecoyResource target = state.getDecoys().stream()
+                    .filter(d -> id.equals(d.getId()))
+                    .findFirst()
+                    .orElse(null);
+            if (target != null) {
+                removed[0] = state.getDecoys().remove(target);
+                removedHolder[0] = target;
+            }
+        });
         if (!removed[0]) {
             auditService.record(actor, "DELETE_DECOY", "DecoyResource", id, "not found", false);
             throw new IllegalArgumentException("Decoy not found: " + id);
+        }
+        if (removedHolder[0] != null && removedHolder[0].getType() == DecoyType.CREDENTIAL
+                && removedHolder[0].getDecoyUsername() != null) {
+            enabledCredentialsByUsername.remove(removedHolder[0].getDecoyUsername());
         }
         auditService.record(actor, "DELETE_DECOY", "DecoyResource", id, null, true);
     }
@@ -125,21 +165,21 @@ public class DecoyService {
                 .orElse(null));
     }
 
-    public DecoyResource findEnabledCredential(String username, String rawPassword) {
-        if (username == null || rawPassword == null) {
+    public DecoyResource findEnabledCredentialByUsername(String username) {
+        if (username == null) {
             return null;
         }
+        return enabledCredentialsByUsername.get(username);
+    }
+
+    public boolean credentialMatches(DecoyResource decoy, String rawPassword) {
+        if (decoy == null || rawPassword == null || decoy.getDecoyPasswordHash() == null) {
+            return false;
+        }
         String hash = sha256(rawPassword);
-        return store.read(state -> state.getDecoys().stream()
-                .filter(d -> d.getType() == DecoyType.CREDENTIAL
-                        && d.getStatus() == DecoyStatus.ENABLED
-                        && username.equals(d.getDecoyUsername()))
-                .filter(d -> d.getDecoyPasswordHash() == null
-                        || MessageDigest.isEqual(
-                                d.getDecoyPasswordHash().getBytes(StandardCharsets.UTF_8),
-                                hash.getBytes(StandardCharsets.UTF_8)))
-                .findFirst()
-                .orElse(null));
+        return MessageDigest.isEqual(
+                decoy.getDecoyPasswordHash().getBytes(StandardCharsets.UTF_8),
+                hash.getBytes(StandardCharsets.UTF_8));
     }
 
     private DecoyResource changeStatus(String id, DecoyStatus status) {
