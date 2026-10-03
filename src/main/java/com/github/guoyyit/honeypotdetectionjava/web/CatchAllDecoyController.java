@@ -3,6 +3,7 @@ package com.github.guoyyit.honeypotdetectionjava.web;
 import com.github.guoyyit.honeypotdetectionjava.config.HoneypotProperties;
 import com.github.guoyyit.honeypotdetectionjava.decoy.DecoyResource;
 import com.github.guoyyit.honeypotdetectionjava.decoy.DecoyService;
+import com.github.guoyyit.honeypotdetectionjava.decoy.ResponseMarkerRenderer;
 import com.github.guoyyit.honeypotdetectionjava.decoy.SimulatedResponse;
 import com.github.guoyyit.honeypotdetectionjava.decoy.TouchKind;
 import com.github.guoyyit.honeypotdetectionjava.event.TouchEventService;
@@ -25,15 +26,18 @@ public class CatchAllDecoyController {
     private final TouchEventService touchEventService;
     private final ExemptionService exemptionService;
     private final HoneypotProperties properties;
+    private final ResponseMarkerRenderer markerRenderer;
 
     public CatchAllDecoyController(DecoyService decoyService,
                                    TouchEventService touchEventService,
                                    ExemptionService exemptionService,
-                                   HoneypotProperties properties) {
+                                   HoneypotProperties properties,
+                                   ResponseMarkerRenderer markerRenderer) {
         this.decoyService = decoyService;
         this.touchEventService = touchEventService;
         this.exemptionService = exemptionService;
         this.properties = properties;
+        this.markerRenderer = markerRenderer;
     }
 
     @RequestMapping("/**")
@@ -53,23 +57,15 @@ public class CatchAllDecoyController {
                 MONITORING_HEADER, request.getHeader(MONITORING_HEADER));
         touchEventService.record(decoy.getId(), TouchKind.ENDPOINT, sourceIp, userAgent, path,
                 match.isMatched(), match.getRuleId());
-        SimulatedResponse simulation = decoy.getSimulatedResponse();
+        SimulatedResponse simulation = decoy.getSimulatedResponse() != null
+                ? decoy.getSimulatedResponse() : new SimulatedResponse();
         String traceMarker = properties.getInternalMarker() + ":" + decoy.getId();
+        ResponseMarkerRenderer.RenderedResponse rendered =
+                markerRenderer.render(simulation, traceMarker);
         return ResponseEntity.status(simulation.getStatusCode())
                 .header(TRACE_HEADER, traceMarker)
-                .contentType(MediaType.parseMediaType(
-                        simulation.getContentType() != null ? simulation.getContentType()
-                                : MediaType.APPLICATION_JSON_VALUE))
-                .body(injectMarker(simulation.getBody(), traceMarker,
-                        simulation.getContentType()));
-    }
-
-    private String injectMarker(String body, String marker, String contentType) {
-        String safeBody = body != null ? body : "";
-        if (contentType != null && contentType.contains("html")) {
-            return safeBody + "<!-- " + marker + " -->";
-        }
-        return safeBody + "\n// " + marker;
+                .contentType(MediaType.parseMediaType(rendered.contentType()))
+                .body(rendered.body());
     }
 
     private String resolveSourceIp(HttpServletRequest request) {

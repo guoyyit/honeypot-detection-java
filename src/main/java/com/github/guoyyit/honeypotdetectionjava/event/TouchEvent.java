@@ -12,6 +12,7 @@ public class TouchEvent {
     private long timestamp;
     private boolean exempted;
     private String matchedExemptionId;
+    private Boolean passwordMatched;
     private boolean processed;
 
     public String getEventId() {
@@ -84,6 +85,14 @@ public class TouchEvent {
 
     public void setMatchedExemptionId(String matchedExemptionId) {
         this.matchedExemptionId = matchedExemptionId;
+    }
+
+    public Boolean getPasswordMatched() {
+        return passwordMatched;
+    }
+
+    public void setPasswordMatched(Boolean passwordMatched) {
+        this.passwordMatched = passwordMatched;
     }
 
     public boolean isProcessed() {

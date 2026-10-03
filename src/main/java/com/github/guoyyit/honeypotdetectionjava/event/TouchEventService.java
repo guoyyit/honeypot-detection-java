@@ -20,6 +20,13 @@ public class TouchEventService {
 
     public TouchEvent record(String decoyId, TouchKind kind, String sourceIp, String userAgent,
                              String requestPath, boolean exempted, String matchedExemptionId) {
+        return record(decoyId, kind, sourceIp, userAgent, requestPath, exempted,
+                matchedExemptionId, null);
+    }
+
+    public TouchEvent record(String decoyId, TouchKind kind, String sourceIp, String userAgent,
+                             String requestPath, boolean exempted, String matchedExemptionId,
+                             Boolean passwordMatched) {
         TouchEvent event = new TouchEvent();
         event.setEventId(UUID.randomUUID().toString());
         event.setDecoyId(decoyId);
@@ -30,6 +37,7 @@ public class TouchEventService {
         event.setTimestamp(System.currentTimeMillis());
         event.setExempted(exempted);
         event.setMatchedExemptionId(matchedExemptionId);
+        event.setPasswordMatched(passwordMatched);
         event.setProcessed(false);
         store.mutate(state -> state.getTouchEvents().add(event));
         processor.submit(event.getEventId());

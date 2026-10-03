@@ -1,8 +1,11 @@
 package com.github.guoyyit.honeypotdetectionjava.tests;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpMethod;
 
 import java.util.Map;
@@ -39,14 +42,19 @@ class ConcurrentTouchTest extends AbstractIntegrationTest {
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(THREADS);
         AtomicInteger okStatus = new AtomicInteger();
+        AtomicInteger wellFormedBodies = new AtomicInteger();
         for (int t = 0; t < THREADS; t++) {
             pool.submit(() -> {
                 try {
                     start.await();
                     for (int i = 0; i < CALLS_PER_THREAD; i++) {
-                        if (rest.getForEntity(url("/concurrent-target"), String.class)
-                                .getStatusCode().is2xxSuccessful()) {
+                        ResponseEntity<String> response =
+                                rest.getForEntity(url("/concurrent-target"), String.class);
+                        if (response.getStatusCode().is2xxSuccessful()) {
                             okStatus.incrementAndGet();
+                            if (isWellFormedMarkedJson(response)) {
+                                wellFormedBodies.incrementAndGet();
+                            }
                         }
                     }
                 } catch (Exception e) {
@@ -62,6 +70,8 @@ class ConcurrentTouchTest extends AbstractIntegrationTest {
 
         int expected = THREADS * CALLS_PER_THREAD;
         assertEquals(expected, okStatus.get());
+        assertEquals(expected, wellFormedBodies.get(),
+                "every concurrent response body must be legal JSON carrying the marker");
 
         long deadline = System.currentTimeMillis() + 15000;
         while (System.currentTimeMillis() < deadline) {
@@ -78,5 +88,18 @@ class ConcurrentTouchTest extends AbstractIntegrationTest {
         String body = adminExchange("/admin/events?decoyId=" + decoyId,
                 HttpMethod.GET, null, String.class).getBody();
         return body.split("eventId").length - 1L;
+    }
+
+    private boolean isWellFormedMarkedJson(ResponseEntity<String> response) {
+        try {
+            String headerMarker = response.getHeaders().getFirst("X-Honeypot-Trace");
+            if (headerMarker == null || !headerMarker.endsWith(":concurrent-endpoint-1")) {
+                return false;
+            }
+            JsonNode parsed = new ObjectMapper().readTree(response.getBody());
+            return headerMarker.equals(parsed.path("_honeypot_trace").asText(""));
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

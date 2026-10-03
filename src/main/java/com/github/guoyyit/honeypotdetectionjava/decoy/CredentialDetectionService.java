@@ -24,14 +24,15 @@ public class CredentialDetectionService {
 
     public TouchEvent detect(String username, String rawPassword, AccessContext context,
                              String headerName, String headerValue) {
-        DecoyResource decoy = decoyService.findEnabledCredential(username, rawPassword);
+        DecoyResource decoy = decoyService.findEnabledCredentialByUsername(username);
         if (decoy == null) {
             return null;
         }
+        boolean passwordMatched = decoyService.passwordMatches(decoy, rawPassword);
         ExemptionMatch match = exemptionService.match(context.getSourceIp(), context.getPath(),
                 context.getUserAgent(), headerName, headerValue);
         return touchEventService.record(decoy.getId(), TouchKind.CREDENTIAL,
                 context.getSourceIp(), context.getUserAgent(), context.getPath(),
-                match.isMatched(), match.getRuleId());
+                match.isMatched(), match.getRuleId(), passwordMatched);
     }
 }
